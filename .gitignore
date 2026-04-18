@@ -1,0 +1,10 @@
+# 忽略 Keil 编译生成的垃圾文件夹
+Objects/
+Listings/
+DebugConfig/
+
+# 忽略临时文件和个人配置
+*.bak
+*.dep
+*.uvguix.*
+JLinkLog.txt
