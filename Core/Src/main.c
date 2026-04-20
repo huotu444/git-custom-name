@@ -76,6 +76,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  // 先把 HAL 和系统时钟拉起来，后面外设才能正常用
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -90,6 +91,7 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  // 把这几个外设先初始化好
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_TIM1_Init();
@@ -99,6 +101,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+  // 电机先准备好，红外模块也先进入工作模式
   Motor_Init();
   Track_Init();
 
@@ -111,6 +114,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // 主循环就干一件事：不停巡线
     Track_FollowLine();
     HAL_Delay(5);
   }

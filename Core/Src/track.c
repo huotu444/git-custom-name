@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#define TRACK_BASE_SPEED      360
+#define TRACK_BASE_SPEED      360   // 巡线时的基础车速，先跑多快就看它
 #define TRACK_MAX_SPEED       999
 #define TRACK_MAX_ERROR       7.0f
 #define TRACK_FRAME_BUF_LEN   64
@@ -14,6 +14,7 @@
 #define TRACK_BLACK_LEVEL     0U
 #define TRACK_TURN_SIGN       (-1.0f)
 
+// 左边是负数，右边是正数，方便算车到底偏哪边
 static const int8_t s_track_weights[8] = {-7, -5, -3, -1, 1, 3, 5, 7};
 
 volatile uint8_t Sensor_Data[8] = {0};
@@ -50,10 +51,13 @@ void Track_Init(void)
     s_track_frame_len = 0;
     s_track_last_nonzero_error = 0.0f;
 
+    // 先给一组能跑起来的 PD 参数，后面主要靠实车微调
     PID_Init(&s_track_pid, 75.0f, 0.0f, 46.0f);
     PID_SetLimit(&s_track_pid, 350.0f, 0.0f);
 
+    // 先发指令告诉红外模块开始吐数据
     HAL_UART_Transmit(&huart2, (uint8_t *)TRACK_ENABLE_CMD, (uint16_t)(sizeof(TRACK_ENABLE_CMD) - 1U), 100);
+    // 打开 USART2 中断接收，后面每来一个字节都会进回调
     HAL_UART_Receive_IT(&huart2, &s_track_rx_buf, 1);
 }
 
@@ -63,6 +67,7 @@ float Track_GetError(void)
     uint8_t active_count = 0;
     float error;
 
+    // 哪一路看到黑线，就把那一路的权重加进去
     for (uint8_t index = 0; index < 8; index++)
     {
         if (Sensor_Data[index] == TRACK_BLACK_LEVEL)
@@ -72,6 +77,7 @@ float Track_GetError(void)
         }
     }
 
+    // 全白时别乱跑，沿用上一次的偏差值，防止车突然抽风
     if (active_count == 0U)
     {
         return s_track_last_nonzero_error;
@@ -110,6 +116,7 @@ static void Track_ParseFrame(const char *frame)
         return;
     }
 
+    // 这一帧是类似 $D,x1:v,...,x8:v# 的格式，下面把 8 路数据拆出来
     cursor = strchr(frame, ',');
     if (cursor == NULL)
     {
@@ -125,6 +132,7 @@ static void Track_ParseFrame(const char *frame)
         }
 
         cursor++;
+        // 这里按你的模块规则：0 表示黑线，1 表示白底
         if (*cursor == '0')
         {
             Sensor_Data[index] = 0;
@@ -151,6 +159,7 @@ static void Track_ParseFrame(const char *frame)
 
 void Track_FollowLine(void)
 {
+    // 先算出当前偏差，再交给 PID 去算要修多少
     float current_error = Track_GetError();
     float turn_out = PID_Calculate(&s_track_pid, 0.0f, current_error) * TRACK_TURN_SIGN;
     int16_t left_speed = (int16_t)((float)TRACK_BASE_SPEED - turn_out);
@@ -164,6 +173,7 @@ void Track_FollowLine(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+    // 蓝牙串口：收到一个字节就判断是不是控制命令
     if (huart->Instance == USART1)
     {
         uint8_t command = g_bluetooth_rx_buf;
@@ -179,6 +189,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
     else if (huart->Instance == USART2)
     {
+        // USART2 收的是红外模块的整帧数据，先攒起来，等到 # 再解析
         if (s_track_rx_buf == '$')
         {
             s_track_frame_len = 0;
