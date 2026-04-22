@@ -65,3 +65,25 @@
 4. 【巡线主逻辑】：
    - 编写 `Track_FollowLine()`。设定 target 为 0，将 `Track_GetError()` 的结果作为 current 传入 PID，得出转向补偿值 `turn_out`。
    - 结合基础速度，计算出左右轮最终速度，并调用底层的 `Car_SetSpeed(left, right)` 驱动小车。
+
+   /clear
+我正在基于 STM32F103C8T6 开发电赛 H 题。现在需要实现一个 OLED 任务选择菜单。
+
+【硬件配置】
+- OLED (0.96寸 I2C)：SCL -> PB8, SDA -> PB9。
+- 交互按键：Mode1 -> PC14, Mode2 -> PC15 (按下为低电平)。
+- 反馈系统：LED -> PA12, 蜂鸣器 -> PA15。
+
+【核心需求】
+1. 实现 oled_menu.c 和 button.c 模块。
+2. 菜单显示：在 OLED 上列出 "Task 1", "Task 2", "Task 3", "Task 4"。
+3. 按键交互逻辑：
+   - 短按 PC14 或 PC15 分别实现菜单光标的循环切换（上/下）。
+   - 双击任一按键：确认当前选中的 Task。
+   - 确认反馈：蜂鸣器响 100ms，LED 闪烁一下。
+4. 特别注意：
+   - PA15 默认是 JTAG 引脚，请务必在初始化代码中包含禁用 JTAG (但保留 SWD) 的 remap 命令。
+   - 编写一个非阻塞的按键扫描函数 Button_Scan()，支持双击判定逻辑。
+   - 预留 Task_Start(uint8_t task_num) 函数接口，以便我后续填入不同任务的控制逻辑。
+
+请生成结构化的 HAL 库代码，并注释掉之前代码中与蓝牙相关的初始化和中断逻辑。

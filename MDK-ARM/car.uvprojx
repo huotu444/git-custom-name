@@ -396,6 +396,11 @@
               <FilePath>..\Core\Src\led.c</FilePath>
             </File>
             <File>
+              <FileName>button.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\button.c</FilePath>
+            </File>
+            <File>
               <FileName>motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\motor.c</FilePath>
@@ -424,6 +429,11 @@
               <FileName>buzzer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\buzzer.c</FilePath>
+            </File>
+            <File>
+              <FileName>oled_menu.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\oled_menu.c</FilePath>
             </File>
             <File>
               <FileName>main.c</FileName>
