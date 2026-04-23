@@ -26,12 +26,16 @@ extern char Total_EncR_Text[16];
 #define OLED_CONTROL_DATA          0x40U
 #define OLED_MENU_LINES             4U
 #define OLED_FEEDBACK_MS          100U
+#define OLED_DELAY_MS            1000U
+#define OLED_DELAY_SCALE             2U
+#define OLED_DELAY_GAP               2U
 
 
 System_StateTypeDef System_State = PAGE_MENU;
 
 static uint8_t s_oled_buffer[OLED_WIDTH * OLED_PAGES];
 static uint8_t s_selected_task = 1U;
+static uint8_t s_pending_task = 1U;
 static uint8_t s_running_task = 1U;
 static uint8_t s_menu_dirty = 1U;
 static uint8_t s_dashboard_dirty = 1U;
@@ -41,6 +45,7 @@ static uint8_t s_refresh_page = 0U;
 static uint8_t s_refresh_end_page = 3U;
 static uint8_t s_feedback_active = 0U;
 static uint32_t s_feedback_off_tick = 0U;
+static uint32_t s_delay_start_tick = 0U;
 static uint32_t s_dashboard_refresh_tick = 0U;
 
 typedef struct
@@ -73,7 +78,8 @@ static const OledGlyphEntry s_ascii_font[] =
     {'T', {0x01, 0x01, 0x7F, 0x01, 0x01}},
     {'U', {0x3F, 0x40, 0x40, 0x3F, 0x00}},
     {'W', {0x7F, 0x20, 0x18, 0x20, 0x7F}},
-    {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}}
+    {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}},
+    {'!', {0x00, 0x00, 0x5F, 0x00, 0x00}}
 };
 
 static const uint8_t s_space_glyph[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
@@ -180,6 +186,54 @@ static void OLED_RequestRefreshRange(uint8_t start_page, uint8_t end_page)
 static void OLED_ClearBuffer(void)
 {
     memset(s_oled_buffer, 0x00, sizeof(s_oled_buffer));
+}
+
+static void OLED_SetPixel(uint16_t x, uint16_t y)
+{
+    uint16_t page_index;
+
+    if (x >= OLED_WIDTH || y >= (OLED_PAGES * 8U))
+    {
+        return;
+    }
+
+    page_index = (uint16_t)(y / 8U) * OLED_WIDTH + x;
+    s_oled_buffer[page_index] |= (uint8_t)(1U << (y & 0x07U));
+}
+
+static void OLED_DrawScaledGlyph(uint16_t x, uint16_t y, const uint8_t *glyph, uint8_t width, uint8_t scale)
+{
+    for (uint8_t column = 0U; column < width; column++)
+    {
+        uint8_t column_bits = glyph[column];
+
+        for (uint8_t row = 0U; row < 8U; row++)
+        {
+            if ((column_bits & (uint8_t)(1U << row)) != 0U)
+            {
+                for (uint8_t x_offset = 0U; x_offset < scale; x_offset++)
+                {
+                    for (uint8_t y_offset = 0U; y_offset < scale; y_offset++)
+                    {
+                        OLED_SetPixel((uint16_t)(x + (uint16_t)column * scale + x_offset),
+                                      (uint16_t)(y + (uint16_t)row * scale + y_offset));
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void OLED_DrawLargeText(uint16_t x, uint16_t y, const char *text)
+{
+    while (*text != '\0')
+    {
+        OledGlyphRef glyph = OLED_GetGlyph(*text);
+
+        OLED_DrawScaledGlyph(x, y, glyph.glyph, glyph.width, OLED_DELAY_SCALE);
+        x = (uint16_t)(x + (uint16_t)(glyph.width * OLED_DELAY_SCALE + OLED_DELAY_GAP));
+        text++;
+    }
 }
 
 void OLED_Clear(void)
@@ -316,6 +370,23 @@ static void OLED_RenderMenu(void)
     OLED_RequestRefresh(3U);
 }
 
+static void OLED_RenderDelay(void)
+{
+    char line[20];
+    uint16_t line_width;
+    uint16_t line_x;
+
+    OLED_ClearBuffer();
+    OLED_DrawLargeText(46U, 24U, "GO!");
+
+    (void)snprintf(line, sizeof(line), "TASK %u", s_pending_task);
+    line_width = (uint16_t)(strlen(line) * 6U);
+    line_x = (uint16_t)((OLED_WIDTH - line_width) / 2U);
+    OLED_DrawString(6U, (uint8_t)line_x, line);
+
+    OLED_RequestRefresh(7U);
+}
+
 static void OLED_RenderDashboard(void)
 {
     char line[24];
@@ -372,16 +443,32 @@ static void OLED_ServiceFeedback(uint32_t now)
     }
 }
 
-static void OLED_EnterDashboard(void)
+static void OLED_EnterDelay(uint8_t task_num)
 {
-    s_running_task = s_selected_task;
+    if (task_num < 1U || task_num > 4U)
+    {
+        task_num = 1U;
+    }
+
+    LED_OFF();
+    BUZZER_OFF();
+
+    s_pending_task = task_num;
+    s_delay_start_tick = HAL_GetTick();
+    System_State = PAGE_DELAY;
+
+    OLED_Clear();
+    OLED_RenderDelay();
+}
+
+static void OLED_EnterDashboard(uint8_t task_num)
+{
+    s_running_task = task_num;
     System_State = PAGE_DASHBOARD;
 
-    LED_ON();
-    BUZZER_ON();
-    s_feedback_active = 1U;
-    s_feedback_off_tick = (uint32_t)(HAL_GetTick() + OLED_FEEDBACK_MS);
+    s_delay_start_tick = 0U;
     s_dashboard_refresh_tick = HAL_GetTick();
+    s_dashboard_dirty = 0U;
 
     OLED_Clear();
     OLED_RenderDashboard();
@@ -392,6 +479,7 @@ void OLED_Menu_Init(void)
 {
     System_State = PAGE_MENU;
     s_selected_task = 1U;
+    s_pending_task = 1U;
     s_running_task = 1U;
     s_menu_dirty = 1U;
     s_dashboard_dirty = 0U;
@@ -399,6 +487,7 @@ void OLED_Menu_Init(void)
     s_refresh_page = 0U;
     s_refresh_end_page = 3U;
     s_feedback_active = 0U;
+    s_delay_start_tick = 0U;
     s_dashboard_refresh_tick = 0U;
     LED_OFF();
     BUZZER_OFF();
@@ -428,7 +517,7 @@ void OLED_Menu_Process(void)
             }
             else if (event.event_type == BUTTON_EVENT_DOUBLE_CLICK && event.button_id == BUTTON_ID_MODE2)
             {
-                OLED_EnterDashboard();
+                OLED_EnterDelay(s_selected_task);
                 break;
             }
         }
@@ -438,6 +527,15 @@ void OLED_Menu_Process(void)
     {
         OLED_RenderMenu();
         s_menu_dirty = 0U;
+    }
+
+    if (System_State == PAGE_DELAY)
+    {
+        if ((uint32_t)(now - s_delay_start_tick) >= OLED_DELAY_MS)
+        {
+            Task_Start(s_pending_task);
+            OLED_EnterDashboard(s_pending_task);
+        }
     }
 
     if (System_State == PAGE_DASHBOARD)

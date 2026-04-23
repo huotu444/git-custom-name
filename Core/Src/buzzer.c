@@ -21,7 +21,7 @@ void Buzzer_Init(void) {
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(BUZZER_PORT, &GPIO_InitStruct);
 
-    // 初始关闭
+    // Active-Low：初始必须拉高保持静音
     BUZZER_OFF();
 }
 

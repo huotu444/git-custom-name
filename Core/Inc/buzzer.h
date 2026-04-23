@@ -7,8 +7,8 @@
 #define BUZZER_PIN   GPIO_PIN_15
 
 // 蜂鸣器控制宏
-#define BUZZER_ON()   HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET)
-#define BUZZER_OFF()  HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET)
+#define BUZZER_ON()   HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET)
+#define BUZZER_OFF()  HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET)
 
 void Buzzer_Init(void);
 void Buzzer_Alarm(uint16_t duration_ms);

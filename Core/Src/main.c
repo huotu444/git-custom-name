@@ -65,6 +65,7 @@ long Total_EncL = 0L;
 long Total_EncR = 0L;
 char Total_EncL_Text[16] = "0";
 char Total_EncR_Text[16] = "0";
+static uint8_t s_active_task = 0U;
 static uint32_t s_mpu_update_tick = 0U;
 static uint32_t s_encoder_update_tick = 0U;
 static uint16_t s_prev_enc_l = 0U;
@@ -80,6 +81,9 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Read_Encoders(void);
 void Run_Task_1(void);
+void Run_Task_2(void);
+void Run_Task_3(void);
+void Run_Task_4(void);
 
 /* USER CODE END PFP */
 
@@ -178,9 +182,29 @@ int main(void)
         s_mpu_update_tick = (uint32_t)(s_mpu_update_tick + 10U);
       }
 
-      if ((System_State == PAGE_DASHBOARD) && (OLED_Menu_GetSelectedTask() == 1U))
+      if (System_State == PAGE_DASHBOARD)
       {
-        Run_Task_1();
+        switch (s_active_task)
+        {
+          case 1U:
+            Run_Task_1();
+            break;
+
+          case 2U:
+            Run_Task_2();
+            break;
+
+          case 3U:
+            Run_Task_3();
+            break;
+
+          case 4U:
+            Run_Task_4();
+            break;
+
+          default:
+            break;
+        }
       }
     }
 
@@ -232,6 +256,18 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+void Task_Start(uint8_t task_num)
+{
+  if (task_num >= 1U && task_num <= 4U)
+  {
+    s_active_task = task_num;
+  }
+  else
+  {
+    s_active_task = 0U;
+  }
+}
+
 void Run_Task_1(void)
 {
   uint32_t now = HAL_GetTick();
@@ -279,6 +315,7 @@ void Run_Task_1(void)
 
     LED_OFF();
     BUZZER_OFF();
+    s_active_task = 0U;
     s_task1_started = 0U;
     s_task1_finishing = 0U;
     s_task1_finish_tick = 0U;
@@ -307,6 +344,18 @@ void Run_Task_1(void)
   right_speed = (int)((float)BASE_SPEED - turn_out);
 
   Motor_SetSpeed(left_speed, right_speed);
+}
+
+__weak void Run_Task_2(void)
+{
+}
+
+__weak void Run_Task_3(void)
+{
+}
+
+__weak void Run_Task_4(void)
+{
 }
 
 void Read_Encoders(void)

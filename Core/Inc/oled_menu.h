@@ -14,7 +14,8 @@
 typedef enum
 {
   PAGE_MENU = 0U,
-  PAGE_DASHBOARD = 1U
+  PAGE_DELAY = 1U,
+  PAGE_DASHBOARD = 2U
 } System_StateTypeDef;
 
 extern System_StateTypeDef System_State;
