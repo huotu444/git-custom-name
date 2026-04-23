@@ -72,6 +72,8 @@ void MPU_Init(void)
     (void)MPU_WriteReg(MPU6050_REG_GYRO_CONFIG, 0x00U);
     HAL_Delay(10);
 
+    HAL_Delay(500);
+
     while ((valid_count < MPU6050_CALIBRATION_SAMPLES) && (attempts < (MPU6050_CALIBRATION_SAMPLES * 2U)))
     {
         attempts++;
@@ -99,7 +101,7 @@ void MPU_Update_Yaw(float dt)
 {
     int16_t raw_z = 0;
     int32_t corrected_z;
-    float gyro_z_dps;
+    float gyro_rate;
 
     if (dt <= 0.0f)
     {
@@ -112,8 +114,14 @@ void MPU_Update_Yaw(float dt)
     }
 
     corrected_z = (int32_t)raw_z - s_gyro_z_offset;
-    gyro_z_dps = (float)corrected_z / MPU6050_GYRO_SENSITIVITY;
-    Car_Yaw += gyro_z_dps * dt;
+    gyro_rate = (float)corrected_z / MPU6050_GYRO_SENSITIVITY;
+
+    if (gyro_rate > -1.0f && gyro_rate < 1.0f)
+    {
+        gyro_rate = 0.0f;
+    }
+
+    Car_Yaw += gyro_rate * dt;
 }
 
 float MPU_GetYaw(void)
