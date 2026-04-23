@@ -28,6 +28,8 @@
 #include "oled_menu.h"
 #include "mpu6050.h"
 
+#include <stdio.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -51,13 +53,21 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+long Total_EncL = 0L;
+long Total_EncR = 0L;
+char Total_EncL_Text[16] = "0";
+char Total_EncR_Text[16] = "0";
 static uint32_t s_mpu_update_tick = 0U;
+static uint32_t s_encoder_update_tick = 0U;
+static uint16_t s_prev_enc_l = 0U;
+static uint16_t s_prev_enc_r = 0U;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void Read_Encoders(void);
 
 /* USER CODE END PFP */
 
@@ -107,7 +117,28 @@ int main(void)
   Buzzer_Init();
   Button_Init();
   OLED_Menu_Init();
+
+  /* TIM2 = left encoder, TIM3 = right encoder; verify CubeMX encoder mode and ARR = 65535. */
+  if (HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  __HAL_TIM_SET_COUNTER(&htim2, 0U);
+  __HAL_TIM_SET_COUNTER(&htim3, 0U);
+  Total_EncL = 0L;
+  Total_EncR = 0L;
+  s_prev_enc_l = 0U;
+  s_prev_enc_r = 0U;
+  (void)sprintf(Total_EncL_Text, "%ld", Total_EncL);
+  (void)sprintf(Total_EncR_Text, "%ld", Total_EncR);
+
   MPU_Init();
+  s_encoder_update_tick = HAL_GetTick();
   s_mpu_update_tick = HAL_GetTick();
 
   /* USER CODE END 2 */
@@ -121,6 +152,12 @@ int main(void)
     /* USER CODE BEGIN 3 */
     {
       uint32_t now = HAL_GetTick();
+
+      while ((uint32_t)(now - s_encoder_update_tick) >= 5U)
+      {
+        Read_Encoders();
+        s_encoder_update_tick = (uint32_t)(s_encoder_update_tick + 5U);
+      }
 
       while ((uint32_t)(now - s_mpu_update_tick) >= 10U)
       {
@@ -176,6 +213,29 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void Read_Encoders(void)
+{
+  uint16_t enc_l_now;
+  uint16_t enc_r_now;
+  int16_t enc_l_delta;
+  int16_t enc_r_delta;
+
+  enc_l_now = (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+  enc_r_now = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+
+  enc_l_delta = (int16_t)(enc_l_now - s_prev_enc_l);
+  enc_r_delta = (int16_t)(enc_r_now - s_prev_enc_r);
+
+  Total_EncL += (long)(-enc_l_delta);
+  Total_EncR += (long)(enc_r_delta);
+
+  s_prev_enc_l = enc_l_now;
+  s_prev_enc_r = enc_r_now;
+
+  (void)sprintf(Total_EncL_Text, "%ld", Total_EncL);
+  (void)sprintf(Total_EncR_Text, "%ld", Total_EncR);
+}
 
 /* USER CODE END 4 */
 

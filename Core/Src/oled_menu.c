@@ -17,6 +17,9 @@
 #include <stdio.h>
 #include <string.h>
 
+extern char Total_EncL_Text[16];
+extern char Total_EncR_Text[16];
+
 #define OLED_WIDTH                 128U
 #define OLED_PAGES                   8U
 #define OLED_CONTROL_CMD           0x00U
@@ -149,27 +152,29 @@ static void OLED_RequestRefresh(uint8_t end_page)
 
     s_refresh_pending = 1U;
     s_refresh_page = 0U;
-
-    if (end_page > s_refresh_end_page || s_refresh_end_page >= OLED_PAGES)
-    {
-        s_refresh_end_page = end_page;
-    }
-    else
-    {
-        s_refresh_end_page = end_page;
-    }
+    s_refresh_end_page = end_page;
 }
 
-static void OLED_RequestSinglePageRefresh(uint8_t page)
+static void OLED_RequestRefreshRange(uint8_t start_page, uint8_t end_page)
 {
-    if (page >= OLED_PAGES)
+    if (start_page >= OLED_PAGES)
     {
         return;
     }
 
+    if (end_page >= OLED_PAGES)
+    {
+        end_page = (uint8_t)(OLED_PAGES - 1U);
+    }
+
+    if (start_page > end_page)
+    {
+        start_page = end_page;
+    }
+
     s_refresh_pending = 1U;
-    s_refresh_page = page;
-    s_refresh_end_page = page;
+    s_refresh_page = start_page;
+    s_refresh_end_page = end_page;
 }
 
 static void OLED_ClearBuffer(void)
@@ -325,9 +330,11 @@ static void OLED_RenderDashboard(void)
     (void)sprintf(line, "Yaw: %.2f", Car_Yaw);
     OLED_DrawString(2U, 0U, line);
 
-    OLED_DrawString(3U, 0U, "EncL: 00000");
+    (void)snprintf(line, sizeof(line), "EncL: %s", Total_EncL_Text);
+    OLED_DrawString(3U, 0U, line);
 
-    OLED_DrawString(4U, 0U, "EncR: 00000");
+    (void)snprintf(line, sizeof(line), "EncR: %s", Total_EncR_Text);
+    OLED_DrawString(4U, 0U, line);
 
     OLED_DrawString(5U, 0U, "Line: 001100");
 
@@ -338,14 +345,21 @@ static void OLED_RenderDashboard(void)
     OLED_RequestRefresh(7U);
 }
 
-static void OLED_UpdateDashboardYaw(void)
+static void OLED_UpdateDashboardTelemetry(void)
 {
     char line[24];
 
-    memset(&s_oled_buffer[(uint16_t)2U * OLED_WIDTH], 0x00, OLED_WIDTH);
+    memset(&s_oled_buffer[(uint16_t)2U * OLED_WIDTH], 0x00, (uint16_t)(OLED_WIDTH * 3U));
     (void)sprintf(line, "Yaw: %.2f", Car_Yaw);
     OLED_DrawString(2U, 0U, line);
-    OLED_RequestSinglePageRefresh(2U);
+
+    (void)snprintf(line, sizeof(line), "EncL: %s", Total_EncL_Text);
+    OLED_DrawString(3U, 0U, line);
+
+    (void)snprintf(line, sizeof(line), "EncR: %s", Total_EncR_Text);
+    OLED_DrawString(4U, 0U, line);
+
+    OLED_RequestRefreshRange(2U, 4U);
 }
 
 static void OLED_ServiceFeedback(uint32_t now)
@@ -436,7 +450,7 @@ void OLED_Menu_Process(void)
         }
         else if ((s_refresh_pending == 0U) && ((uint32_t)(now - s_dashboard_refresh_tick) >= 100U))
         {
-            OLED_UpdateDashboardYaw();
+            OLED_UpdateDashboardTelemetry();
             s_dashboard_refresh_tick = now;
         }
     }
