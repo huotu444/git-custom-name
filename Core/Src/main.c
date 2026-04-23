@@ -22,16 +22,20 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include "led.h"
 #include "buzzer.h"
 #include "button.h"
+#include "motor.h"
 #include "oled_menu.h"
 #include "mpu6050.h"
 
 #include <stdio.h>
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+extern float Car_Yaw;
+extern System_StateTypeDef System_State;
 
 /* USER CODE END Includes */
 
@@ -42,6 +46,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define TARGET_PULSE_100CM  7036L
+#define BASE_SPEED          400
+#define KP_YAW              15.0f
+#define TASK1_FINISH_MS     500U
 
 /* USER CODE END PD */
 
@@ -61,6 +69,9 @@ static uint32_t s_mpu_update_tick = 0U;
 static uint32_t s_encoder_update_tick = 0U;
 static uint16_t s_prev_enc_l = 0U;
 static uint16_t s_prev_enc_r = 0U;
+static uint8_t s_task1_started = 0U;
+static uint8_t s_task1_finishing = 0U;
+static uint32_t s_task1_finish_tick = 0U;
 
 /* USER CODE END PV */
 
@@ -68,6 +79,7 @@ static uint16_t s_prev_enc_r = 0U;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Read_Encoders(void);
+void Run_Task_1(void);
 
 /* USER CODE END PFP */
 
@@ -116,6 +128,7 @@ int main(void)
   LED_Init();
   Buzzer_Init();
   Button_Init();
+  Motor_Init();
   OLED_Menu_Init();
 
   /* TIM2 = left encoder, TIM3 = right encoder; verify CubeMX encoder mode and ARR = 65535. */
@@ -163,6 +176,11 @@ int main(void)
       {
         MPU_Update_Yaw(0.01f);
         s_mpu_update_tick = (uint32_t)(s_mpu_update_tick + 10U);
+      }
+
+      if ((System_State == PAGE_DASHBOARD) && (OLED_Menu_GetSelectedTask() == 1U))
+      {
+        Run_Task_1();
       }
     }
 
@@ -213,6 +231,83 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void Run_Task_1(void)
+{
+  uint32_t now = HAL_GetTick();
+  long average_pulse;
+  float error_yaw;
+  float turn_out;
+  int left_speed;
+  int right_speed;
+
+  if (s_task1_started == 0U)
+  {
+    uint16_t current_enc_l;
+    uint16_t current_enc_r;
+
+    s_task1_started = 1U;
+    s_task1_finishing = 0U;
+    s_task1_finish_tick = 0U;
+
+    Total_EncL = 0L;
+    Total_EncR = 0L;
+    Car_Yaw = 0.0f;
+
+    current_enc_l = (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+    current_enc_r = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+    s_prev_enc_l = current_enc_l;
+    s_prev_enc_r = current_enc_r;
+
+    s_encoder_update_tick = now;
+    s_mpu_update_tick = now;
+
+    (void)sprintf(Total_EncL_Text, "%ld", Total_EncL);
+    (void)sprintf(Total_EncR_Text, "%ld", Total_EncR);
+  }
+
+  if (s_task1_finishing != 0U)
+  {
+    Motor_SetSpeed(0, 0);
+
+    if ((uint32_t)(now - s_task1_finish_tick) < TASK1_FINISH_MS)
+    {
+      LED_ON();
+      BUZZER_ON();
+      return;
+    }
+
+    LED_OFF();
+    BUZZER_OFF();
+    s_task1_started = 0U;
+    s_task1_finishing = 0U;
+    s_task1_finish_tick = 0U;
+    OLED_Menu_Init();
+    now = HAL_GetTick();
+    s_encoder_update_tick = now;
+    s_mpu_update_tick = now;
+    return;
+  }
+
+  average_pulse = (Total_EncL + Total_EncR) / 2L;
+
+  if (average_pulse >= TARGET_PULSE_100CM)
+  {
+    Motor_SetSpeed(0, 0);
+    s_task1_finishing = 1U;
+    s_task1_finish_tick = now;
+    LED_ON();
+    BUZZER_ON();
+    return;
+  }
+
+  error_yaw = 0.0f - Car_Yaw;
+  turn_out = KP_YAW * error_yaw;
+  left_speed = (int)((float)BASE_SPEED + turn_out);
+  right_speed = (int)((float)BASE_SPEED - turn_out);
+
+  Motor_SetSpeed(left_speed, right_speed);
+}
 
 void Read_Encoders(void)
 {

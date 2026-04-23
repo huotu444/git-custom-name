@@ -1,28 +1,29 @@
 #include "motor.h"
 #include "tim.h"
 
-// 速度值别超范围，太大就掐住，太小就转成绝对值
-static uint16_t Motor_ClampSpeed(int16_t speed)
+static uint16_t Motor_ClampSpeed(int speed)
 {
-    if (speed < 0)
+    int32_t abs_speed = speed;
+
+    if (abs_speed < 0)
     {
-        speed = (int16_t)(-speed);
+        abs_speed = -abs_speed;
     }
 
-    if (speed > 999)
+    if (abs_speed > MOTOR_PWM_MAX)
     {
-        speed = 999;
+        abs_speed = MOTOR_PWM_MAX;
     }
 
-    return (uint16_t)speed;
+    return (uint16_t)abs_speed;
 }
 
-// 这一只轮子怎么转，靠方向脚 + PWM 一起决定
 static void Motor_SetWheel(GPIO_TypeDef *in1_port, uint16_t in1_pin,
                            GPIO_TypeDef *in2_port, uint16_t in2_pin,
-                           uint32_t channel, int16_t speed)
+                           TIM_HandleTypeDef *htim, uint32_t channel, int speed)
 {
-    // 正数：正转；负数：反转；0：停
+    uint16_t pwm = Motor_ClampSpeed(speed);
+
     if (speed > 0)
     {
         HAL_GPIO_WritePin(in1_port, in1_pin, GPIO_PIN_SET);
@@ -39,45 +40,56 @@ static void Motor_SetWheel(GPIO_TypeDef *in1_port, uint16_t in1_pin,
         HAL_GPIO_WritePin(in2_port, in2_pin, GPIO_PIN_RESET);
     }
 
-    // PWM 占空比越大，电机越有劲
-    __HAL_TIM_SET_COMPARE(&htim1, channel, Motor_ClampSpeed(speed));
+    __HAL_TIM_SET_COMPARE(htim, channel, pwm);
 }
 
-void Motor_Init(void) {
-    // 把两路 PWM 打开，让电机驱动开始工作
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); // PWMA (PA8)
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4); // PWMB (PA11)
-    __HAL_TIM_MOE_ENABLE(&htim1);             // 高级定时器主输出使能
+void Motor_Init(void)
+{
+    HAL_TIM_PWM_Start(&MOTOR_LEFT_PWM_HANDLE, MOTOR_LEFT_PWM_CHANNEL);
+    HAL_TIM_PWM_Start(&MOTOR_RIGHT_PWM_HANDLE, MOTOR_RIGHT_PWM_CHANNEL);
+    __HAL_TIM_MOE_ENABLE(&MOTOR_LEFT_PWM_HANDLE);
+
+    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
+
+    __HAL_TIM_SET_COMPARE(&MOTOR_LEFT_PWM_HANDLE, MOTOR_LEFT_PWM_CHANNEL, 0U);
+    __HAL_TIM_SET_COMPARE(&MOTOR_RIGHT_PWM_HANDLE, MOTOR_RIGHT_PWM_CHANNEL, 0U);
+}
+
+void Motor_SetSpeed(int left_speed, int right_speed)
+{
+    Motor_SetWheel(AIN1_GPIO_Port, AIN1_Pin,
+                   AIN2_GPIO_Port, AIN2_Pin,
+                   &MOTOR_LEFT_PWM_HANDLE, MOTOR_LEFT_PWM_CHANNEL, left_speed);
+
+    Motor_SetWheel(BIN1_GPIO_Port, BIN1_Pin,
+                   BIN2_GPIO_Port, BIN2_Pin,
+                   &MOTOR_RIGHT_PWM_HANDLE, MOTOR_RIGHT_PWM_CHANNEL, right_speed);
 }
 
 void Car_SetSpeed(int16_t left_speed, int16_t right_speed)
 {
-    // 左右轮分开控速，这就是差速小车转弯的核心
-    Motor_SetWheel(MOTOR_A_IN1_PORT, MOTOR_A_IN1_PIN,
-                   MOTOR_A_IN2_PORT, MOTOR_A_IN2_PIN,
-                   TIM_CHANNEL_1, left_speed);
-
-    Motor_SetWheel(MOTOR_B_IN1_PORT, MOTOR_B_IN1_PIN,
-                   MOTOR_B_IN2_PORT, MOTOR_B_IN2_PIN,
-                   TIM_CHANNEL_4, right_speed);
+    Motor_SetSpeed((int)left_speed, (int)right_speed);
 }
 
 void Car_Forward(uint16_t speed) {
-    Car_SetSpeed((int16_t)speed, (int16_t)speed);
+    Motor_SetSpeed((int)speed, (int)speed);
 }
 
 void Car_Backward(uint16_t speed) {
-    Car_SetSpeed((int16_t)(-((int16_t)speed)), (int16_t)(-((int16_t)speed)));
+    Motor_SetSpeed(-((int)speed), -((int)speed));
 }
 
 void Car_TurnLeft(uint16_t speed) {
-    Car_SetSpeed((int16_t)(-((int16_t)speed)), (int16_t)speed);
+    Motor_SetSpeed(-((int)speed), (int)speed);
 }
 
 void Car_TurnRight(uint16_t speed) {
-    Car_SetSpeed((int16_t)speed, (int16_t)(-((int16_t)speed)));
+    Motor_SetSpeed((int)speed, -((int)speed));
 }
 
 void Car_Stop(void) {
-    Car_SetSpeed(0, 0);
+    Motor_SetSpeed(0, 0);
 }
