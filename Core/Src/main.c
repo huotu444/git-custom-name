@@ -26,6 +26,7 @@
 #include "buzzer.h"
 #include "button.h"
 #include "oled_menu.h"
+#include "mpu6050.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -50,6 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static uint32_t s_mpu_update_tick = 0U;
 
 /* USER CODE END PV */
 
@@ -105,6 +107,8 @@ int main(void)
   Buzzer_Init();
   Button_Init();
   OLED_Menu_Init();
+  MPU_Init();
+  s_mpu_update_tick = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -115,9 +119,19 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    {
+      uint32_t now = HAL_GetTick();
+
+      while ((uint32_t)(now - s_mpu_update_tick) >= 10U)
+      {
+        MPU_Update_Yaw(0.01f);
+        s_mpu_update_tick = (uint32_t)(s_mpu_update_tick + 10U);
+      }
+    }
+
     Button_Scan();
     OLED_Menu_Process();
-    HAL_Delay(10);
+    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }

@@ -2,7 +2,7 @@
 /**
   ******************************************************************************
   * @file    oled_menu.c
-  * @brief   OLED 任务选择菜单
+  * @brief   OLED 页面状态机，支持主菜单与运行看板切换
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -11,54 +11,105 @@
 #include "led.h"
 #include "buzzer.h"
 #include "i2c.h"
+#include "mpu6050.h"
+#include "oledfont.h"
 
+#include <stdio.h>
 #include <string.h>
 
-#define OLED_WIDTH             128U
-#define OLED_PAGES               8U
-#define OLED_CONTROL_CMD       0x00U
-#define OLED_CONTROL_DATA      0x40U
+#define OLED_WIDTH                 128U
+#define OLED_PAGES                   8U
+#define OLED_CONTROL_CMD           0x00U
+#define OLED_CONTROL_DATA          0x40U
+#define OLED_MENU_LINES             4U
+#define OLED_FEEDBACK_MS          100U
+
+
+System_StateTypeDef System_State = PAGE_MENU;
 
 static uint8_t s_oled_buffer[OLED_WIDTH * OLED_PAGES];
 static uint8_t s_selected_task = 1U;
+static uint8_t s_running_task = 1U;
 static uint8_t s_menu_dirty = 1U;
+static uint8_t s_dashboard_dirty = 1U;
 static uint16_t s_oled_addr = (0x3CU << 1);
+static uint8_t s_refresh_pending = 0U;
+static uint8_t s_refresh_page = 0U;
+static uint8_t s_refresh_end_page = 3U;
+static uint8_t s_feedback_active = 0U;
+static uint32_t s_feedback_off_tick = 0U;
+static uint32_t s_dashboard_refresh_tick = 0U;
 
-static const uint8_t GLYPH_SPACE[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
-static const uint8_t GLYPH_GT[5]    = {0x08, 0x14, 0x22, 0x14, 0x08};
-static const uint8_t GLYPH_T[5]     = {0x01, 0x01, 0x7F, 0x01, 0x01};
-static const uint8_t GLYPH_M[5]     = {0x7F, 0x06, 0x18, 0x06, 0x7F};
-static const uint8_t GLYPH_a[5]     = {0x20, 0x54, 0x54, 0x54, 0x78};
-static const uint8_t GLYPH_s[5]     = {0x48, 0x54, 0x54, 0x54, 0x20};
-static const uint8_t GLYPH_k[5]     = {0x7F, 0x08, 0x14, 0x22, 0x41};
-static const uint8_t GLYPH_e[5]     = {0x38, 0x54, 0x54, 0x54, 0x18};
-static const uint8_t GLYPH_n[5]     = {0x7C, 0x08, 0x04, 0x04, 0x78};
-static const uint8_t GLYPH_u[5]     = {0x3C, 0x40, 0x40, 0x20, 0x7C};
-static const uint8_t GLYPH_1[5]     = {0x00, 0x42, 0x7F, 0x40, 0x00};
-static const uint8_t GLYPH_2[5]     = {0x62, 0x51, 0x49, 0x49, 0x46};
-static const uint8_t GLYPH_3[5]     = {0x22, 0x41, 0x49, 0x49, 0x36};
-static const uint8_t GLYPH_4[5]     = {0x18, 0x14, 0x12, 0x7F, 0x10};
-
-static const uint8_t *OLED_GetGlyph(char ch)
+typedef struct
 {
-    switch (ch)
+    char ch;
+    uint8_t glyph[5];
+} OledGlyphEntry;
+
+static const OledGlyphEntry s_ascii_font[] =
+{
+    {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
+    {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
+    {'>', {0x08, 0x14, 0x22, 0x14, 0x08}},
+    {'[', {0x00, 0x7F, 0x41, 0x41, 0x00}},
+    {']', {0x00, 0x41, 0x41, 0x7F, 0x00}},
+    {':', {0x00, 0x36, 0x36, 0x00, 0x00}},
+    {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
+    {'A', {0x7E, 0x11, 0x11, 0x7E, 0x00}},
+    {'C', {0x3E, 0x41, 0x41, 0x22, 0x00}},
+    {'D', {0x7F, 0x41, 0x41, 0x3E, 0x00}},
+    {'E', {0x7F, 0x49, 0x49, 0x41, 0x00}},
+    {'G', {0x3E, 0x41, 0x49, 0x7A, 0x00}},
+    {'I', {0x41, 0x7F, 0x41, 0x00, 0x00}},
+    {'K', {0x7F, 0x08, 0x14, 0x63, 0x00}},
+    {'L', {0x7F, 0x40, 0x40, 0x40, 0x00}},
+    {'M', {0x7F, 0x02, 0x0C, 0x02, 0x7F}},
+    {'N', {0x7F, 0x06, 0x18, 0x7F, 0x00}},
+    {'R', {0x7F, 0x09, 0x19, 0x66, 0x00}},
+    {'S', {0x46, 0x49, 0x49, 0x31, 0x00}},
+    {'T', {0x01, 0x01, 0x7F, 0x01, 0x01}},
+    {'U', {0x3F, 0x40, 0x40, 0x3F, 0x00}},
+    {'W', {0x7F, 0x20, 0x18, 0x20, 0x7F}},
+    {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}}
+};
+
+static const uint8_t s_space_glyph[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
+
+typedef struct
+{
+    const uint8_t *glyph;
+    uint8_t width;
+} OledGlyphRef;
+
+static OledGlyphRef OLED_GetGlyph(char ch)
+{
+    OledGlyphRef glyph_ref;
+
+    if (ch >= '0' && ch <= '9')
     {
-        case ' ': return GLYPH_SPACE;
-        case '>': return GLYPH_GT;
-        case 'T': return GLYPH_T;
-        case 'M': return GLYPH_M;
-        case 'a': return GLYPH_a;
-        case 's': return GLYPH_s;
-        case 'k': return GLYPH_k;
-        case 'e': return GLYPH_e;
-        case 'n': return GLYPH_n;
-        case 'u': return GLYPH_u;
-        case '1': return GLYPH_1;
-        case '2': return GLYPH_2;
-        case '3': return GLYPH_3;
-        case '4': return GLYPH_4;
-        default:  return GLYPH_SPACE;
+        glyph_ref.glyph = F6x8_Num[(uint8_t)(ch - '0')];
+        glyph_ref.width = 6U;
+        return glyph_ref;
     }
+
+    if (ch >= 'a' && ch <= 'z')
+    {
+        ch = (char)(ch - ('a' - 'A'));
+    }
+
+    for (uint8_t index = 0U; index < (uint8_t)(sizeof(s_ascii_font) / sizeof(s_ascii_font[0])); index++)
+    {
+        if (s_ascii_font[index].ch == ch)
+        {
+            glyph_ref.glyph = s_ascii_font[index].glyph;
+            glyph_ref.width = 5U;
+            return glyph_ref;
+        }
+    }
+
+    glyph_ref.glyph = s_space_glyph;
+    glyph_ref.width = 5U;
+    return glyph_ref;
 }
 
 static void OLED_WriteCommand(uint8_t command)
@@ -67,14 +118,73 @@ static void OLED_WriteCommand(uint8_t command)
     HAL_I2C_Master_Transmit(&hi2c1, s_oled_addr, buffer, sizeof(buffer), 100);
 }
 
+static void OLED_SetCursor(uint8_t page, uint8_t x)
+{
+    uint8_t command_buffer[4];
+
+    x = (uint8_t)(x + 2U);
+
+    command_buffer[0] = OLED_CONTROL_CMD;
+    command_buffer[1] = (uint8_t)(0xB0U + page);
+    command_buffer[2] = (uint8_t)(0x00U | (x & 0x0FU));
+    command_buffer[3] = (uint8_t)(0x10U | (uint8_t)(x >> 4));
+    HAL_I2C_Master_Transmit(&hi2c1, s_oled_addr, command_buffer, sizeof(command_buffer), 100);
+}
+
+static void OLED_RefreshPage(uint8_t page)
+{
+    uint8_t tx_buffer[OLED_WIDTH + 1U];
+
+    tx_buffer[0] = OLED_CONTROL_DATA;
+    memcpy(&tx_buffer[1], &s_oled_buffer[(uint16_t)page * OLED_WIDTH], OLED_WIDTH);
+    HAL_I2C_Master_Transmit(&hi2c1, s_oled_addr, tx_buffer, sizeof(tx_buffer), 100);
+}
+
+static void OLED_RequestRefresh(uint8_t end_page)
+{
+    if (end_page >= OLED_PAGES)
+    {
+        end_page = (uint8_t)(OLED_PAGES - 1U);
+    }
+
+    s_refresh_pending = 1U;
+    s_refresh_page = 0U;
+
+    if (end_page > s_refresh_end_page || s_refresh_end_page >= OLED_PAGES)
+    {
+        s_refresh_end_page = end_page;
+    }
+    else
+    {
+        s_refresh_end_page = end_page;
+    }
+}
+
+static void OLED_RequestSinglePageRefresh(uint8_t page)
+{
+    if (page >= OLED_PAGES)
+    {
+        return;
+    }
+
+    s_refresh_pending = 1U;
+    s_refresh_page = page;
+    s_refresh_end_page = page;
+}
+
 static void OLED_ClearBuffer(void)
 {
     memset(s_oled_buffer, 0x00, sizeof(s_oled_buffer));
 }
 
+void OLED_Clear(void)
+{
+    OLED_ClearBuffer();
+}
+
 static void OLED_DrawChar(uint8_t page, uint8_t x, char ch)
 {
-    const uint8_t *glyph = OLED_GetGlyph(ch);
+    OledGlyphRef glyph;
     uint16_t base_index;
 
     if (page >= OLED_PAGES || x >= (OLED_WIDTH - 6U))
@@ -82,14 +192,19 @@ static void OLED_DrawChar(uint8_t page, uint8_t x, char ch)
         return;
     }
 
+    glyph = OLED_GetGlyph(ch);
     base_index = (uint16_t)page * OLED_WIDTH + x;
 
-    for (uint8_t column = 0U; column < 5U; column++)
+
+    for (uint8_t column = 0U; column < glyph.width; column++)
     {
-        s_oled_buffer[base_index + column] = glyph[column];
+        s_oled_buffer[base_index + column] = glyph.glyph[column];
     }
 
-    s_oled_buffer[base_index + 5U] = 0x00;
+    if (glyph.width < 6U)
+    {
+        s_oled_buffer[base_index + glyph.width] = 0x00;
+    }
 }
 
 static void OLED_DrawString(uint8_t page, uint8_t x, const char *text)
@@ -107,24 +222,29 @@ static void OLED_DrawString(uint8_t page, uint8_t x, const char *text)
     }
 }
 
-static void OLED_Refresh(void)
+static void OLED_RefreshService(void)
 {
-    uint8_t tx_buffer[17];
-
-    for (uint8_t page = 0U; page < OLED_PAGES; page++)
+    if (s_refresh_pending == 0U)
     {
-        OLED_WriteCommand((uint8_t)(0xB0U + page));
-        OLED_WriteCommand(0x00U);
-        OLED_WriteCommand(0x10U);
+        return;
+    }
 
-        tx_buffer[0] = OLED_CONTROL_DATA;
+    if (s_refresh_page > s_refresh_end_page)
+    {
+        s_refresh_pending = 0U;
+        return;
+    }
 
-        for (uint8_t offset = 0U; offset < OLED_WIDTH; offset += 16U)
-        {
-            uint8_t copy_len = (uint8_t)(((OLED_WIDTH - offset) > 16U) ? 16U : (OLED_WIDTH - offset));
-            memcpy(&tx_buffer[1], &s_oled_buffer[(uint16_t)page * OLED_WIDTH + offset], copy_len);
-            HAL_I2C_Master_Transmit(&hi2c1, s_oled_addr, tx_buffer, (uint16_t)(copy_len + 1U), 100);
-        }
+    OLED_SetCursor(s_refresh_page, 0U);
+    OLED_RefreshPage(s_refresh_page);
+
+    if (s_refresh_page >= s_refresh_end_page)
+    {
+        s_refresh_pending = 0U;
+    }
+    else
+    {
+        s_refresh_page++;
     }
 }
 
@@ -172,78 +292,156 @@ static void OLED_InitHardware(void)
 
 static void OLED_RenderMenu(void)
 {
+    char line[20];
+
     OLED_ClearBuffer();
 
-    OLED_DrawString(0U, 24U, "Task Menu");
+    (void)snprintf(line, sizeof(line), "%c TASK 1", (s_selected_task == 1U) ? '>' : ' ');
+    OLED_DrawString(0U, 0U, line);
 
-    OLED_DrawString(2U, 0U, (s_selected_task == 1U) ? ">" : " ");
-    OLED_DrawString(2U, 12U, "Task 1");
+    (void)snprintf(line, sizeof(line), "%c TASK 2", (s_selected_task == 2U) ? '>' : ' ');
+    OLED_DrawString(1U, 0U, line);
 
-    OLED_DrawString(3U, 0U, (s_selected_task == 2U) ? ">" : " ");
-    OLED_DrawString(3U, 12U, "Task 2");
+    (void)snprintf(line, sizeof(line), "%c TASK 3", (s_selected_task == 3U) ? '>' : ' ');
+    OLED_DrawString(2U, 0U, line);
 
-    OLED_DrawString(4U, 0U, (s_selected_task == 3U) ? ">" : " ");
-    OLED_DrawString(4U, 12U, "Task 3");
+    (void)snprintf(line, sizeof(line), "%c TASK 4", (s_selected_task == 4U) ? '>' : ' ');
+    OLED_DrawString(3U, 0U, line);
 
-    OLED_DrawString(5U, 0U, (s_selected_task == 4U) ? ">" : " ");
-    OLED_DrawString(5U, 12U, "Task 4");
-
-    OLED_Refresh();
+    OLED_RequestRefresh(3U);
 }
 
-static void OLED_ConfirmTask(void)
+static void OLED_RenderDashboard(void)
 {
+    char line[24];
+
+    OLED_ClearBuffer();
+
+    OLED_DrawString(0U, 24U, "--- RUNNING ---");
+
+    (void)snprintf(line, sizeof(line), "Task: %u", s_running_task);
+    OLED_DrawString(1U, 0U, line);
+
+    (void)sprintf(line, "Yaw: %.2f", Car_Yaw);
+    OLED_DrawString(2U, 0U, line);
+
+    OLED_DrawString(3U, 0U, "EncL: 00000");
+
+    OLED_DrawString(4U, 0U, "EncR: 00000");
+
+    OLED_DrawString(5U, 0U, "Line: 001100");
+
+    OLED_DrawString(6U, 0U, "Time: 00s");
+
+    OLED_DrawString(7U, 0U, " ");
+
+    OLED_RequestRefresh(7U);
+}
+
+static void OLED_UpdateDashboardYaw(void)
+{
+    char line[24];
+
+    memset(&s_oled_buffer[(uint16_t)2U * OLED_WIDTH], 0x00, OLED_WIDTH);
+    (void)sprintf(line, "Yaw: %.2f", Car_Yaw);
+    OLED_DrawString(2U, 0U, line);
+    OLED_RequestSinglePageRefresh(2U);
+}
+
+static void OLED_ServiceFeedback(uint32_t now)
+{
+    if (s_feedback_active != 0U && (int32_t)(now - s_feedback_off_tick) >= 0)
+    {
+        LED_OFF();
+        BUZZER_OFF();
+        s_feedback_active = 0U;
+    }
+}
+
+static void OLED_EnterDashboard(void)
+{
+    s_running_task = s_selected_task;
+    System_State = PAGE_DASHBOARD;
+
     LED_ON();
     BUZZER_ON();
-    HAL_Delay(100);
-    LED_OFF();
-    BUZZER_OFF();
+    s_feedback_active = 1U;
+    s_feedback_off_tick = (uint32_t)(HAL_GetTick() + OLED_FEEDBACK_MS);
+    s_dashboard_refresh_tick = HAL_GetTick();
 
-    Task_Start(s_selected_task);
+    OLED_Clear();
+    OLED_RenderDashboard();
+    OLED_RequestRefresh(7U);
 }
 
 void OLED_Menu_Init(void)
 {
+    System_State = PAGE_MENU;
     s_selected_task = 1U;
+    s_running_task = 1U;
     s_menu_dirty = 1U;
+    s_dashboard_dirty = 0U;
+    s_refresh_pending = 0U;
+    s_refresh_page = 0U;
+    s_refresh_end_page = 3U;
+    s_feedback_active = 0U;
+    s_dashboard_refresh_tick = 0U;
+    LED_OFF();
+    BUZZER_OFF();
 
     OLED_InitHardware();
+    OLED_Clear();
     OLED_RenderMenu();
+    OLED_RequestRefresh(7U);
     s_menu_dirty = 0U;
 }
 
 void OLED_Menu_Process(void)
 {
     ButtonEvent_t event;
-    uint8_t need_refresh = 0U;
+    uint32_t now = HAL_GetTick();
+
+    OLED_ServiceFeedback(now);
 
     while (Button_GetEvent(&event) != 0U)
     {
-        if (event.event_type == BUTTON_EVENT_SHORT_PRESS)
+        if (System_State == PAGE_MENU)
         {
-            if (event.button_id == BUTTON_ID_MODE1)
+            if (event.event_type == BUTTON_EVENT_SHORT_PRESS && event.button_id == BUTTON_ID_MODE1)
             {
-                s_selected_task = (s_selected_task == 1U) ? 4U : (uint8_t)(s_selected_task - 1U);
-                need_refresh = 1U;
+                s_selected_task = (s_selected_task >= 4U) ? 1U : (uint8_t)(s_selected_task + 1U);
+                s_menu_dirty = 1U;
             }
-            else if (event.button_id == BUTTON_ID_MODE2)
+            else if (event.event_type == BUTTON_EVENT_DOUBLE_CLICK && event.button_id == BUTTON_ID_MODE2)
             {
-                s_selected_task = (s_selected_task == 4U) ? 1U : (uint8_t)(s_selected_task + 1U);
-                need_refresh = 1U;
+                OLED_EnterDashboard();
+                break;
             }
-        }
-        else if (event.event_type == BUTTON_EVENT_DOUBLE_CLICK)
-        {
-            OLED_ConfirmTask();
-            need_refresh = 1U;
         }
     }
 
-    if (need_refresh != 0U || s_menu_dirty != 0U)
+    if (System_State == PAGE_MENU && s_menu_dirty != 0U)
     {
         OLED_RenderMenu();
         s_menu_dirty = 0U;
     }
+
+    if (System_State == PAGE_DASHBOARD)
+    {
+        if (s_dashboard_dirty != 0U)
+        {
+            OLED_RenderDashboard();
+            s_dashboard_dirty = 0U;
+            s_dashboard_refresh_tick = now;
+        }
+        else if ((s_refresh_pending == 0U) && ((uint32_t)(now - s_dashboard_refresh_tick) >= 100U))
+        {
+            OLED_UpdateDashboardYaw();
+            s_dashboard_refresh_tick = now;
+        }
+    }
+
+    OLED_RefreshService();
 }
 
 uint8_t OLED_Menu_GetSelectedTask(void)

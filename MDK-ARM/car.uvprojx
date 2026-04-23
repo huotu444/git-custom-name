@@ -431,6 +431,11 @@
               <FilePath>..\Core\Src\buzzer.c</FilePath>
             </File>
             <File>
+              <FileName>mpu6050.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\mpu6050.c</FilePath>
+            </File>
+            <File>
               <FileName>oled_menu.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\oled_menu.c</FilePath>
