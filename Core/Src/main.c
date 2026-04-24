@@ -56,6 +56,7 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_B2C        3000L  // 循迹必须超过此距离，才允许检测C点出弯(全白)
 #define MIN_DIST_C2D        1500L  // 盲走必须超过此距离，才允许寻找D点黑线
 #define YAW_COMPENSATE        15.0f // C点出弯航向补偿角
+#define YAW_SIGN_DEADZONE      3.0f // 航向符号死区，小角度抖动不用于判断顺逆时针
 
 #define T2_PREPARE_MS       1000U
 #define NODE_SIGNAL_MS       500U
@@ -425,6 +426,7 @@ __weak void Run_Task_2(void)
   int right_speed;
   static uint8_t t2_step = 0U;
   static float T2_Target_Yaw = 0.0f;
+  static float t2_last_signed_yaw = 0.0f;
   static uint8_t t2_finish_pending = 0U;
   static uint8_t t2_finish_white_active = 0U;
   static uint32_t t2_finish_white_tick = 0U;
@@ -438,6 +440,7 @@ __weak void Run_Task_2(void)
     t2_finish_white_tick = 0U;
     t2_step = T2_STEP_PREPARE;
     T2_Target_Yaw = 0.0f;
+    t2_last_signed_yaw = 0.0f;
 
     Trigger_Node_Signal();
     Car_Yaw = 0.0f;
@@ -509,10 +512,28 @@ __weak void Run_Task_2(void)
       Track_FollowLine();
       average_pulse = (Total_EncL + Total_EncR) / 2L;
 
+      if ((Car_Yaw > YAW_SIGN_DEADZONE) || (Car_Yaw < -YAW_SIGN_DEADZONE))
+      {
+        t2_last_signed_yaw = Car_Yaw;
+      }
+
       if ((average_pulse > MIN_DIST_B2C) && (Track_IsLostLine() == 1U))
       {
+        float yaw_basis = t2_last_signed_yaw;
+        float yaw_comp = YAW_COMPENSATE;
+
+        if ((yaw_basis <= YAW_SIGN_DEADZONE) && (yaw_basis >= -YAW_SIGN_DEADZONE))
+        {
+          yaw_basis = Car_Yaw;
+        }
+
+        if (yaw_basis < -YAW_SIGN_DEADZONE)
+        {
+          yaw_comp = -YAW_COMPENSATE;
+        }
+
         Trigger_Node_Signal();
-        T2_Target_Yaw = Car_Yaw + YAW_COMPENSATE;
+        T2_Target_Yaw = Car_Yaw + yaw_comp;
         Task2_ResetMotion(now);
         t2_step = 3U;
       }
