@@ -226,3 +226,16 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     }
 }
 
+uint8_t Track_IsLostLine(void)
+{
+    for (uint8_t index = 0U; index < 8U; index++)
+    {
+        if (Sensor_Data[index] == TRACK_BLACK_LEVEL)
+        {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+
