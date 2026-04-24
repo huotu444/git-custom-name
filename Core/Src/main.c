@@ -68,6 +68,23 @@ extern System_StateTypeDef System_State;
 #define T2_FINISH_FAILSAFE_DIST 9000L // 极端情况下的超长距离保险停止，避免无限绕行
 #define T2_FINISH_WHITE_MS   300U  // 全白需持续更久，避免弯道瞬时丢线误停
 
+#define MIN_DIST_A2C        2000L  // A->C 对角线盲走最小防抖脉冲
+#define MIN_DIST_C2B        3000L  // C->B 弧线循迹最小防抖脉冲
+#define MIN_DIST_B2D        1500L  // B->D 对角线盲走最小防抖脉冲
+#define MIN_DIST_D2A        3000L  // D->A 弧线循迹最小防抖脉冲
+
+#define YAW_COMP_B2D       55.0f  // B 点出弯转向 D 的补偿角，正负需实测
+#define YAW_COMP_A2C       -55.0f  // A 点出弯转向 C 的补偿角，正负需实测
+
+#define F8_PREPARE_MS      1000U
+#define F8_STEP_PREPARE   ((uint8_t)0xFFU)
+#define F8_BLIND_BASE_SPEED 360
+#define F8_BLIND_KP         15.0f
+#define F8_BLIND_MAX_TURN  260.0f
+#define F8_LINE_FOUND_MIN_BLACK 2U
+#define F8_LINE_FOUND_HOLD_MS  80U
+#define F8_ALL_WHITE_HOLD_MS  120U
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -93,6 +110,8 @@ static uint32_t s_task1_finish_tick = 0U;
 static uint8_t s_node_signal_active = 0U;
 static uint32_t s_node_signal_start_tick = 0U;
 static uint8_t s_t2_start_request = 0U;
+static uint8_t s_t3_start_request = 0U;
+static uint8_t s_t4_start_request = 0U;
 
 /* USER CODE END PV */
 
@@ -107,6 +126,8 @@ void Run_Task_4(void);
 void Trigger_Node_Signal(void);
 void Node_Signal_Process(uint32_t now);
 static void Task2_ResetMotion(uint32_t now);
+static uint8_t Track_BlackCount(void);
+static void Run_Figure8_Task(uint8_t target_laps);
 
 /* USER CODE END PFP */
 
@@ -301,6 +322,24 @@ void Task_Start(uint8_t task_num)
   {
     s_t2_start_request = 0U;
   }
+
+  if (task_num == 3U)
+  {
+    s_t3_start_request = 1U;
+  }
+  else
+  {
+    s_t3_start_request = 0U;
+  }
+
+  if (task_num == 4U)
+  {
+    s_t4_start_request = 1U;
+  }
+  else
+  {
+    s_t4_start_request = 0U;
+  }
 }
 
 void Trigger_Node_Signal(void)
@@ -336,6 +375,21 @@ static void Task2_ResetMotion(uint32_t now)
 
   s_encoder_update_tick = now;
   s_mpu_update_tick = now;
+}
+
+static uint8_t Track_BlackCount(void)
+{
+  uint8_t black_count = 0U;
+
+  for (uint8_t index = 0U; index < 8U; index++)
+  {
+    if (Sensor_Data[index] == 0U)
+    {
+      black_count++;
+    }
+  }
+
+  return black_count;
 }
 
 void Run_Task_1(void)
@@ -613,10 +667,303 @@ __weak void Run_Task_2(void)
 
 __weak void Run_Task_3(void)
 {
+  Run_Figure8_Task(1U);
 }
 
 __weak void Run_Task_4(void)
 {
+  Run_Figure8_Task(4U);
+}
+
+static void Run_Figure8_Task(uint8_t target_laps)
+{
+  uint32_t now = HAL_GetTick();
+  long average_pulse;
+  uint8_t black_count;
+  uint8_t raw_transition;
+  float error_yaw;
+  float turn_out;
+  int left_speed;
+  int right_speed;
+  uint8_t *start_request;
+
+  static uint8_t step = 0U;
+  static float Target_Yaw = 0.0f;
+  static float last_signed_yaw = 0.0f;
+  static uint8_t current_lap = 0U;
+  static uint8_t finish_pending = 0U;
+  static uint8_t cond_hold_active = 0U;
+  static uint32_t cond_hold_tick = 0U;
+  static uint32_t prepare_tick = 0U;
+
+  if (target_laps <= 1U)
+  {
+    start_request = &s_t3_start_request;
+  }
+  else
+  {
+    start_request = &s_t4_start_request;
+  }
+
+  if (*start_request != 0U)
+  {
+    *start_request = 0U;
+    finish_pending = 0U;
+    step = F8_STEP_PREPARE;
+    Target_Yaw = 0.0f;
+    last_signed_yaw = 0.0f;
+    current_lap = 0U;
+    cond_hold_active = 0U;
+    cond_hold_tick = 0U;
+
+    Trigger_Node_Signal();
+    Car_Yaw = 0.0f;
+    Task2_ResetMotion(now);
+    Car_SetSpeed(0, 0);
+    prepare_tick = now;
+    return;
+  }
+
+  if (finish_pending != 0U)
+  {
+    Car_SetSpeed(0, 0);
+
+    if (s_node_signal_active == 0U)
+    {
+      s_active_task = 0U;
+      finish_pending = 0U;
+      step = 0U;
+      Target_Yaw = 0.0f;
+      last_signed_yaw = 0.0f;
+      current_lap = 0U;
+      cond_hold_active = 0U;
+      cond_hold_tick = 0U;
+      s_t3_start_request = 0U;
+      s_t4_start_request = 0U;
+
+      OLED_Menu_Init();
+      now = HAL_GetTick();
+      s_encoder_update_tick = now;
+      s_mpu_update_tick = now;
+    }
+
+    return;
+  }
+
+  switch (step)
+  {
+    case F8_STEP_PREPARE:
+      Car_SetSpeed(0, 0);
+
+      if ((uint32_t)(now - prepare_tick) >= F8_PREPARE_MS)
+      {
+        step = 1U;
+        Target_Yaw = 0.0f;
+        cond_hold_active = 0U;
+        cond_hold_tick = 0U;
+      }
+      break;
+
+    case 1U:
+      average_pulse = (Total_EncL + Total_EncR) / 2L;
+      error_yaw = Target_Yaw - Car_Yaw;
+      turn_out = F8_BLIND_KP * error_yaw;
+
+      if (turn_out > F8_BLIND_MAX_TURN)
+      {
+        turn_out = F8_BLIND_MAX_TURN;
+      }
+      else if (turn_out < -F8_BLIND_MAX_TURN)
+      {
+        turn_out = -F8_BLIND_MAX_TURN;
+      }
+
+      left_speed = (int)((float)F8_BLIND_BASE_SPEED + turn_out);
+      right_speed = (int)((float)F8_BLIND_BASE_SPEED - turn_out);
+      Car_SetSpeed(left_speed, right_speed);
+
+      black_count = Track_BlackCount();
+      raw_transition = (uint8_t)(((average_pulse > MIN_DIST_A2C) && (Track_IsLostLine() == 0U) && (black_count >= F8_LINE_FOUND_MIN_BLACK)) ? 1U : 0U);
+
+      if (raw_transition != 0U)
+      {
+        if (cond_hold_active == 0U)
+        {
+          cond_hold_active = 1U;
+          cond_hold_tick = now;
+        }
+        else if ((uint32_t)(now - cond_hold_tick) >= F8_LINE_FOUND_HOLD_MS)
+        {
+          Trigger_Node_Signal();
+          Task2_ResetMotion(now);
+          step = 2U;
+          cond_hold_active = 0U;
+        }
+      }
+      else
+      {
+        cond_hold_active = 0U;
+      }
+      break;
+
+    case 2U:
+      Track_FollowLine();
+      average_pulse = (Total_EncL + Total_EncR) / 2L;
+      if ((Car_Yaw > YAW_SIGN_DEADZONE) || (Car_Yaw < -YAW_SIGN_DEADZONE))
+      {
+        last_signed_yaw = Car_Yaw;
+      }
+
+      raw_transition = (uint8_t)(((average_pulse > MIN_DIST_C2B) && (Track_IsLostLine() == 1U)) ? 1U : 0U);
+
+      if (raw_transition != 0U)
+      {
+        if (cond_hold_active == 0U)
+        {
+          cond_hold_active = 1U;
+          cond_hold_tick = now;
+        }
+        else if ((uint32_t)(now - cond_hold_tick) >= F8_ALL_WHITE_HOLD_MS)
+        {
+          float yaw_basis = last_signed_yaw;
+          float yaw_comp = YAW_COMP_B2D;
+
+          if ((yaw_basis <= YAW_SIGN_DEADZONE) && (yaw_basis >= -YAW_SIGN_DEADZONE))
+          {
+            yaw_basis = Car_Yaw;
+          }
+
+          if (yaw_basis < -YAW_SIGN_DEADZONE)
+          {
+            yaw_comp = -YAW_COMP_B2D;
+          }
+
+          Trigger_Node_Signal();
+          Task2_ResetMotion(now);
+          Target_Yaw = Car_Yaw + yaw_comp;
+          step = 3U;
+          cond_hold_active = 0U;
+        }
+      }
+      else
+      {
+        cond_hold_active = 0U;
+      }
+      break;
+
+    case 3U:
+      average_pulse = (Total_EncL + Total_EncR) / 2L;
+      error_yaw = Target_Yaw - Car_Yaw;
+      turn_out = F8_BLIND_KP * error_yaw;
+
+      if (turn_out > F8_BLIND_MAX_TURN)
+      {
+        turn_out = F8_BLIND_MAX_TURN;
+      }
+      else if (turn_out < -F8_BLIND_MAX_TURN)
+      {
+        turn_out = -F8_BLIND_MAX_TURN;
+      }
+
+      left_speed = (int)((float)F8_BLIND_BASE_SPEED + turn_out);
+      right_speed = (int)((float)F8_BLIND_BASE_SPEED - turn_out);
+      Car_SetSpeed(left_speed, right_speed);
+
+      black_count = Track_BlackCount();
+      raw_transition = (uint8_t)(((average_pulse > MIN_DIST_B2D) && (Track_IsLostLine() == 0U) && (black_count >= F8_LINE_FOUND_MIN_BLACK)) ? 1U : 0U);
+
+      if (raw_transition != 0U)
+      {
+        if (cond_hold_active == 0U)
+        {
+          cond_hold_active = 1U;
+          cond_hold_tick = now;
+        }
+        else if ((uint32_t)(now - cond_hold_tick) >= F8_LINE_FOUND_HOLD_MS)
+        {
+          Trigger_Node_Signal();
+          Task2_ResetMotion(now);
+          step = 4U;
+          cond_hold_active = 0U;
+        }
+      }
+      else
+      {
+        cond_hold_active = 0U;
+      }
+      break;
+
+    case 4U:
+      Track_FollowLine();
+      average_pulse = (Total_EncL + Total_EncR) / 2L;
+
+      if ((Car_Yaw > YAW_SIGN_DEADZONE) || (Car_Yaw < -YAW_SIGN_DEADZONE))
+      {
+        last_signed_yaw = Car_Yaw;
+      }
+
+      raw_transition = (uint8_t)(((average_pulse > MIN_DIST_D2A) && (Track_IsLostLine() == 1U)) ? 1U : 0U);
+
+      if (raw_transition != 0U)
+      {
+        if (cond_hold_active == 0U)
+        {
+          cond_hold_active = 1U;
+          cond_hold_tick = now;
+        }
+        else if ((uint32_t)(now - cond_hold_tick) >= F8_ALL_WHITE_HOLD_MS)
+        {
+          float yaw_basis = last_signed_yaw;
+          float yaw_comp = YAW_COMP_A2C;
+
+          if ((yaw_basis <= YAW_SIGN_DEADZONE) && (yaw_basis >= -YAW_SIGN_DEADZONE))
+          {
+            yaw_basis = Car_Yaw;
+          }
+
+          if (yaw_basis < -YAW_SIGN_DEADZONE)
+          {
+            yaw_comp = -YAW_COMP_A2C;
+          }
+
+          Trigger_Node_Signal();
+          Task2_ResetMotion(now);
+          current_lap++;
+
+          if (current_lap < target_laps)
+          {
+            Target_Yaw = Car_Yaw + yaw_comp;
+            step = 1U;
+          }
+          else
+          {
+            Car_SetSpeed(0, 0);
+            finish_pending = 1U;
+          }
+
+          cond_hold_active = 0U;
+        }
+      }
+      else
+      {
+        cond_hold_active = 0U;
+      }
+      break;
+
+    default:
+      step = F8_STEP_PREPARE;
+      Target_Yaw = 0.0f;
+      last_signed_yaw = 0.0f;
+      current_lap = 0U;
+      cond_hold_active = 0U;
+      cond_hold_tick = 0U;
+      Trigger_Node_Signal();
+      Car_Yaw = 0.0f;
+      Task2_ResetMotion(now);
+      Car_SetSpeed(0, 0);
+      prepare_tick = now;
+      break;
+  }
 }
 
 void Read_Encoders(void)
