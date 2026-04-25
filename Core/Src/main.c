@@ -47,8 +47,8 @@ extern System_StateTypeDef System_State;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TARGET_PULSE_100CM  7036L
-#define BASE_SPEED          400
+#define TARGET_PULSE_100CM  6500L
+#define BASE_SPEED          350
 #define KP_YAW              15.0f
 #define TASK1_FINISH_MS     500U
 
@@ -64,9 +64,9 @@ extern System_StateTypeDef System_State;
 #define T2_BLIND_BASE_SPEED  300
 #define T2_BLIND_KP         15.0f
 #define T2_BLIND_MAX_TURN  260.0f
-#define T2_FINISH_DIST      5200L  // D->A 至少到后段后才允许按全白结束
+#define T2_FINISH_DIST      4600L  // D->A 至少到后段后才允许按全白结束
 #define T2_FINISH_FAILSAFE_DIST 9000L // 极端情况下的超长距离保险停止，避免无限绕行
-#define T2_FINISH_WHITE_MS   300U  // 全白需持续更久，避免弯道瞬时丢线误停
+#define T2_FINISH_WHITE_MS   200U  // 全白需持续更久，避免弯道瞬时丢线误停
 
 #define MIN_DIST_A2C        2000L  // A->C 对角线盲走最小防抖脉冲
 #define MIN_DIST_C2B        3000L  // C->B 弧线循迹最小防抖脉冲
