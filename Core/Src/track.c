@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#define TRACK_BASE_SPEED      300   // 巡线时的基础车速，先跑多快就看它
+#define TRACK_BASE_SPEED      280   // 巡线时的基础车速，先跑多快就看它
 #define TRACK_MAX_SPEED       999
 #define TRACK_MAX_ERROR       7.0f
 #define TRACK_FRAME_BUF_LEN   64
@@ -52,8 +52,8 @@ void Track_Init(void)
     s_track_last_nonzero_error = 0.0f;
 
     // 先给一组能跑起来的 PD 参数，后面主要靠实车微调
-    PID_Init(&s_track_pid, 75.0f, 0.0f, 46.0f);
-    PID_SetLimit(&s_track_pid, 350.0f, 0.0f);
+    PID_Init(&s_track_pid, 63.0f, 0.0f, 48.0f);
+    PID_SetLimit(&s_track_pid, 330.0f, 0.0f);
 
     // 先发指令告诉红外模块开始吐数据
     HAL_UART_Transmit(&huart2, (uint8_t *)TRACK_ENABLE_CMD, (uint16_t)(sizeof(TRACK_ENABLE_CMD) - 1U), 100);
