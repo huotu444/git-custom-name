@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#define TRACK_BASE_SPEED      360   // 巡线时的基础车速，先跑多快就看它
+#define TRACK_BASE_SPEED      300   // 巡线时的基础车速，先跑多快就看它
 #define TRACK_MAX_SPEED       999
 #define TRACK_MAX_ERROR       7.0f
 #define TRACK_FRAME_BUF_LEN   64

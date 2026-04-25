@@ -55,7 +55,7 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_A2B        1500L  // 盲走必须超过此距离，才允许寻找B点黑线
 #define MIN_DIST_B2C        3000L  // 循迹必须超过此距离，才允许检测C点出弯(全白)
 #define MIN_DIST_C2D        1500L  // 盲走必须超过此距离，才允许寻找D点黑线
-#define YAW_COMPENSATE        15.0f // C点出弯航向补偿角
+#define YAW_COMPENSATE        21.0f // C点出弯航向补偿角
 #define YAW_SIGN_DEADZONE      3.0f // 航向符号死区，小角度抖动不用于判断顺逆时针
 
 #define T2_PREPARE_MS       1000U
