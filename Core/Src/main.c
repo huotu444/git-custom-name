@@ -73,15 +73,15 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_B2D        1500L  // B->D 对角线盲走最小防抖脉冲
 #define MIN_DIST_D2A        3000L  // D->A 弧线循迹最小防抖脉冲
 
-#define YAW_COMP_B2D       50.0f  // B 点出弯转向 D 的补偿角，正负需实测
-#define YAW_COMP_A2C       -50.0f  // A 点出弯转向 C 的补偿角，正负需实测
+#define YAW_COMP_B2D       51.8f  // B 点出弯转向 D 的补偿角，正负需实测
+#define YAW_COMP_A2C       -51.8f  // A 点出弯转向 C 的补偿角，正负需实测
 
 #define F8_PREPARE_MS      1000U
 #define F8_STEP_PREPARE   ((uint8_t)0xFFU)
 #define F8_BLIND_BASE_SPEED 300
 #define F8_BLIND_KP         15.0f
 #define F8_BLIND_MAX_TURN  270.0f
-#define F8_LINE_FOUND_MIN_BLACK 2U
+#define F8_LINE_FOUND_MIN_BLACK 1U
 #define F8_LINE_FOUND_HOLD_MS  80U
 #define F8_ALL_WHITE_HOLD_MS  120U
 
