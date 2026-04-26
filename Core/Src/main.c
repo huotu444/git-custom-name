@@ -55,7 +55,7 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_A2B        1500L  // 盲走必须超过此距离，才允许寻找B点黑线
 #define MIN_DIST_B2C        3000L  // 循迹必须超过此距离，才允许检测C点出弯(全白)
 #define MIN_DIST_C2D        1500L  // 盲走必须超过此距离，才允许寻找D点黑线
-#define YAW_COMPENSATE        21.0f // C点出弯航向补偿角
+#define YAW_COMPENSATE        20.0f // C点出弯航向补偿角
 #define YAW_SIGN_DEADZONE      3.0f // 航向符号死区，小角度抖动不用于判断顺逆时针
 
 #define T2_PREPARE_MS       1000U
@@ -73,8 +73,8 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_B2D        1500L  // B->D 对角线盲走最小防抖脉冲
 #define MIN_DIST_D2A        3000L  // D->A 弧线循迹最小防抖脉冲
 
-#define YAW_COMP_B2D       51.8f  // B 点出弯转向 D 的补偿角，正负需实测
-#define YAW_COMP_A2C       -51.8f  // A 点出弯转向 C 的补偿角，正负需实测
+#define YAW_COMP_B2D       51.9f  // B 点出弯转向 D 的补偿角，正负需实测TASK3
+#define YAW_COMP_A2C       -51.7f  // A 点出弯转向 C 的补偿角，正负需实测
 
 #define F8_PREPARE_MS      1000U
 #define F8_STEP_PREPARE   ((uint8_t)0xFFU)

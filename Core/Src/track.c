@@ -52,7 +52,7 @@ void Track_Init(void)
     s_track_last_nonzero_error = 0.0f;
 
     // 先给一组能跑起来的 PD 参数，后面主要靠实车微调
-    PID_Init(&s_track_pid, 53.0f, 0.0f, 57.0f);
+    PID_Init(&s_track_pid, 53.0f, 0.0f, 58.0f);
     PID_SetLimit(&s_track_pid, 330.0f, 0.0f);
 
     // 先发指令告诉红外模块开始吐数据
