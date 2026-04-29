@@ -48,7 +48,7 @@ extern System_StateTypeDef System_State;
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define TARGET_PULSE_100CM  6500L
-#define BASE_SPEED          350
+#define BASE_SPEED          260
 #define KP_YAW              15.0f
 #define TASK1_FINISH_MS     500U
 
@@ -61,7 +61,7 @@ extern System_StateTypeDef System_State;
 #define T2_PREPARE_MS       1000U
 #define NODE_SIGNAL_MS       500U
 #define T2_STEP_PREPARE    ((uint8_t)0xFFU)
-#define T2_BLIND_BASE_SPEED  300
+#define T2_BLIND_BASE_SPEED  400
 #define T2_BLIND_KP         15.0f
 #define T2_BLIND_MAX_TURN  260.0f
 #define T2_FINISH_DIST      4600L  // D->A 至少到后段后才允许按全白结束
@@ -73,17 +73,22 @@ extern System_StateTypeDef System_State;
 #define MIN_DIST_B2D        1500L  // B->D 对角线盲走最小防抖脉冲
 #define MIN_DIST_D2A        3000L  // D->A 弧线循迹最小防抖脉冲
 
-#define YAW_COMP_B2D       51.9f  // B 点出弯转向 D 的补偿角，正负需实测TASK3
-#define YAW_COMP_A2C       -51.7f  // A 点出弯转向 C 的补偿角，正负需实测
+#define YAW_COMP_B2D       55.3f  // B 点出弯转向 D 的补偿角，正负需实测TASK3
+#define YAW_COMP_A2C       53.7f  // A 点出弯转向 C 的补偿角，正负需实测
 
 #define F8_PREPARE_MS      1000U
 #define F8_STEP_PREPARE   ((uint8_t)0xFFU)
 #define F8_BLIND_BASE_SPEED 300
-#define F8_BLIND_KP         15.0f
-#define F8_BLIND_MAX_TURN  270.0f
+#define F8_BLIND_KP         15.0f  // 增大 P 系数，盲走段纠偏更积极
+#define F8_BLIND_MAX_TURN  270.0f  // 配合放大限幅，允许更大差速修正
 #define F8_LINE_FOUND_MIN_BLACK 1U
 #define F8_LINE_FOUND_HOLD_MS  80U
 #define F8_ALL_WHITE_HOLD_MS  120U
+
+#define F8_SPIN_KP             8.0f   // 原地转弯比例系数，不宜过大防止超调
+#define F8_SPIN_MAX_SPEED    200.0f   // 原地转弯单轮最大 PWM
+#define F8_SPIN_DONE_DEG       3.0f   // 原地转弯到位判定阈值（°），小于此角度认为对准
+#define F8_SPIN_SETTLE_MS    200U     // 停车确认后再等待的稳定时长（ms），车在 hold 期间已停好，此值可短
 
 /* USER CODE END PD */
 
@@ -695,6 +700,7 @@ static void Run_Figure8_Task(uint8_t target_laps)
   static uint8_t cond_hold_active = 0U;
   static uint32_t cond_hold_tick = 0U;
   static uint32_t prepare_tick = 0U;
+  static uint32_t spin_settle_tick = 0U;  /* 进入原地转弯时记录的时刻，用于停车稳定等待 */
 
   if (target_laps <= 1U)
   {
@@ -715,6 +721,7 @@ static void Run_Figure8_Task(uint8_t target_laps)
     current_lap = 0U;
     cond_hold_active = 0U;
     cond_hold_tick = 0U;
+    spin_settle_tick = 0U;
 
     Trigger_Node_Signal();
     Car_Yaw = 0.0f;
@@ -796,6 +803,9 @@ static void Run_Figure8_Task(uint8_t target_laps)
         {
           Trigger_Node_Signal();
           Task2_ResetMotion(now);
+          /* 进入弧线前重置 Yaw 基准，弧线段从 0° 开始重新积分，防止前段误差带入 */
+          Car_Yaw = 0.0f;
+          last_signed_yaw = 0.0f;
           step = 2U;
           cond_hold_active = 0U;
         }
@@ -807,8 +817,18 @@ static void Run_Figure8_Task(uint8_t target_laps)
       break;
 
     case 2U:
-      Track_FollowLine();
       average_pulse = (Total_EncL + Total_EncR) / 2L;
+
+      /* 若已触发出弯条件，立刻刹车，禁止继续循迹，保证停车角度一致 */
+      if (cond_hold_active != 0U)
+      {
+        Car_SetSpeed(0, 0);
+      }
+      else
+      {
+        Track_FollowLine();
+      }
+
       if ((Car_Yaw > YAW_SIGN_DEADZONE) || (Car_Yaw < -YAW_SIGN_DEADZONE))
       {
         last_signed_yaw = Car_Yaw;
@@ -820,8 +840,10 @@ static void Run_Figure8_Task(uint8_t target_laps)
       {
         if (cond_hold_active == 0U)
         {
+          /* 第一次检测到全白：立刻停车，开始计时确认 */
           cond_hold_active = 1U;
           cond_hold_tick = now;
+          Car_SetSpeed(0, 0);
         }
         else if ((uint32_t)(now - cond_hold_tick) >= F8_ALL_WHITE_HOLD_MS)
         {
@@ -840,8 +862,11 @@ static void Run_Figure8_Task(uint8_t target_laps)
 
           Trigger_Node_Signal();
           Task2_ResetMotion(now);
-          Target_Yaw = Car_Yaw + yaw_comp;
-          step = 3U;
+          /* 车在 hold 期间已刹停，此处重置 Yaw 基准后直接进入原地转弯 */
+          Car_Yaw = 0.0f;
+          Target_Yaw = yaw_comp;
+          spin_settle_tick = now;
+          step = 21U;
           cond_hold_active = 0U;
         }
       }
@@ -850,6 +875,45 @@ static void Run_Figure8_Task(uint8_t target_laps)
         cond_hold_active = 0U;
       }
       break;
+
+    case 21U:  /* 原地转弯：B 点，转向 D 方向 */
+    {
+      /* 第一阶段：停车稳定等待，让车身惯性完全消散 */
+      if ((uint32_t)(now - spin_settle_tick) < F8_SPIN_SETTLE_MS)
+      {
+        Car_SetSpeed(0, 0);
+        break;
+      }
+
+      /* 第二阶段：开始原地旋转 */
+      {
+        float error_spin = Target_Yaw - Car_Yaw;
+        float spin_out;
+        float abs_error = (error_spin < 0.0f) ? -error_spin : error_spin;
+        int16_t spin_pwm;
+
+        if (abs_error <= F8_SPIN_DONE_DEG)
+        {
+          /* 已转到位：重置基准，直走目标设 0，进入盲走 B→D */
+          Car_SetSpeed(0, 0);
+          Task2_ResetMotion(now);
+          Car_Yaw = 0.0f;
+          Target_Yaw = 0.0f;
+          last_signed_yaw = 0.0f;
+          step = 3U;
+        }
+        else
+        {
+          /* 还没转到位：原地差速旋转 */
+          spin_out = F8_SPIN_KP * error_spin;
+          if (spin_out >  F8_SPIN_MAX_SPEED) { spin_out =  F8_SPIN_MAX_SPEED; }
+          if (spin_out < -F8_SPIN_MAX_SPEED) { spin_out = -F8_SPIN_MAX_SPEED; }
+          spin_pwm = (int16_t)spin_out;
+          Car_SetSpeed(spin_pwm, (int16_t)(-spin_pwm));
+        }
+      }
+    }
+    break;
 
     case 3U:
       average_pulse = (Total_EncL + Total_EncR) / 2L;
@@ -883,6 +947,9 @@ static void Run_Figure8_Task(uint8_t target_laps)
         {
           Trigger_Node_Signal();
           Task2_ResetMotion(now);
+          /* 进入下一段弧线前重置 Yaw 基准，last_signed_yaw 也归零等待新弧线数据 */
+          Car_Yaw = 0.0f;
+          last_signed_yaw = 0.0f;
           step = 4U;
           cond_hold_active = 0U;
         }
@@ -894,8 +961,17 @@ static void Run_Figure8_Task(uint8_t target_laps)
       break;
 
     case 4U:
-      Track_FollowLine();
       average_pulse = (Total_EncL + Total_EncR) / 2L;
+
+      /* 若已触发出弯条件，立刻刹车，禁止继续循迹，保证停车角度一致 */
+      if (cond_hold_active != 0U)
+      {
+        Car_SetSpeed(0, 0);
+      }
+      else
+      {
+        Track_FollowLine();
+      }
 
       if ((Car_Yaw > YAW_SIGN_DEADZONE) || (Car_Yaw < -YAW_SIGN_DEADZONE))
       {
@@ -908,8 +984,10 @@ static void Run_Figure8_Task(uint8_t target_laps)
       {
         if (cond_hold_active == 0U)
         {
+          /* 第一次检测到全白：立刻停车，开始计时确认 */
           cond_hold_active = 1U;
           cond_hold_tick = now;
+          Car_SetSpeed(0, 0);
         }
         else if ((uint32_t)(now - cond_hold_tick) >= F8_ALL_WHITE_HOLD_MS)
         {
@@ -932,8 +1010,11 @@ static void Run_Figure8_Task(uint8_t target_laps)
 
           if (current_lap < target_laps)
           {
-            Target_Yaw = Car_Yaw + yaw_comp;
-            step = 1U;
+            /* 车在 hold 期间已刹停，重置基准后直接进入原地转弯 */
+            Car_Yaw = 0.0f;
+            Target_Yaw = yaw_comp;
+            spin_settle_tick = now;
+            step = 41U;
           }
           else
           {
@@ -949,6 +1030,45 @@ static void Run_Figure8_Task(uint8_t target_laps)
         cond_hold_active = 0U;
       }
       break;
+
+    case 41U:  /* 原地转弯：A 点，转向 C 方向，进入下一圈 */
+    {
+      /* 第一阶段：停车稳定等待，让车身惯性完全消散 */
+      if ((uint32_t)(now - spin_settle_tick) < F8_SPIN_SETTLE_MS)
+      {
+        Car_SetSpeed(0, 0);
+        break;
+      }
+
+      /* 第二阶段：开始原地旋转 */
+      {
+        float error_spin = Target_Yaw - Car_Yaw;
+        float spin_out;
+        float abs_error = (error_spin < 0.0f) ? -error_spin : error_spin;
+        int16_t spin_pwm;
+
+        if (abs_error <= F8_SPIN_DONE_DEG)
+        {
+          /* 已转到位：重置基准，直走目标设 0，进入盲走 A→C */
+          Car_SetSpeed(0, 0);
+          Task2_ResetMotion(now);
+          Car_Yaw = 0.0f;
+          Target_Yaw = 0.0f;
+          last_signed_yaw = 0.0f;
+          step = 1U;
+        }
+        else
+        {
+          /* 还没转到位：原地差速旋转 */
+          spin_out = F8_SPIN_KP * error_spin;
+          if (spin_out >  F8_SPIN_MAX_SPEED) { spin_out =  F8_SPIN_MAX_SPEED; }
+          if (spin_out < -F8_SPIN_MAX_SPEED) { spin_out = -F8_SPIN_MAX_SPEED; }
+          spin_pwm = (int16_t)spin_out;
+          Car_SetSpeed(spin_pwm, (int16_t)(-spin_pwm));
+        }
+      }
+    }
+    break;
 
     default:
       step = F8_STEP_PREPARE;

@@ -116,7 +116,7 @@ void MPU_Update_Yaw(float dt)
     corrected_z = (int32_t)raw_z - s_gyro_z_offset;
     gyro_rate = (float)corrected_z / MPU6050_GYRO_SENSITIVITY;
 
-    if (gyro_rate > -1.0f && gyro_rate < 1.0f)
+    if (gyro_rate > -0.3f && gyro_rate < 0.3f)
     {
         gyro_rate = 0.0f;
     }
