@@ -47,7 +47,7 @@ extern System_StateTypeDef System_State;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TARGET_PULSE_100CM  6500L
+#define TARGET_PULSE_100CM  3300L
 #define BASE_SPEED          260
 #define KP_YAW              15.0f
 #define TASK1_FINISH_MS     500U
